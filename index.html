@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Undertale風 ターン制RPG</title>
+    <style>
+        /* 全体のスタイル（レトロゲーム風） */
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #game-wrapper {
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            max-height: 800px;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        /* 敵の表示エリア */
+        #enemy-area {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 20px;
+            height: 150px;
+        }
+
+        #enemy-sprite {
+            width: 100px;
+            height: 100px;
+            background-color: #fff;
+            clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+            margin-bottom: 10px;
+            animation: float 2s infinite ease-in-out;
+            transition: opacity 0.2s, background-color 0.2s;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .damage-flash {
+            background-color: red !important;
+            opacity: 0.5;
+        }
+
+        /* HPバー共通スタイル */
+        .hp-bar-container {
+            width: 200px;
+            height: 15px;
+            background-color: #444;
+            border: 2px solid #fff;
+            margin-top: 5px;
+        }
+
+        .hp-bar-fill {
+            height: 100%;
+            background-color: #00ff00;
+            transition: width 0.3s ease;
+        }
+        
+        .enemy-hp-fill {
+            background-color: #ff0000;
+        }
+
+        /* 中央の画面（テキストまたは回避キャンバス） */
+        #center-screen {
+            flex-grow: 1;
+            border: 4px solid #fff;
+            position: relative;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            background-color: #000;
+            overflow: hidden;
+        }
+
+        #dialogue-box {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            padding: 20px;
+            font-size: 24px;
+            line-height: 1.5;
+            display: block; /* 初期表示 */
+        }
+
+        #dodge-canvas {
+            display: none; /* 初期非表示 */
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+        }
+
+        /* プレイヤー情報とUIエリア */
+        #player-ui {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        #player-stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        #player-hp-text {
+            margin-left: 10px;
+        }
+
+        .player-hp-bar-container {
+            width: 150px;
+            height: 20px;
+            background-color: #ff0000;
+            border: none;
+            margin-left: 10px;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        .player-hp-bar-fill {
+            height: 100%;
+            background-color: #ffff00;
+            transition: width 0.2s ease;
+        }
+
+        /* コマンドボタン */
+        #command-buttons {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 10px;
+        }
+
+        .cmd-btn {
+            background-color: transparent;
+            color: #fff;
+            border: 2px solid #f98b25;
+            padding: 10px 20px;
+            font-size: 20px;
+            font-family: inherit;
+            cursor: pointer;
+            position: relative;
+            outline: none;
+        }
+
+        .cmd-btn:hover, .cmd-btn:focus {
+            background-color: #333;
+            border-color: #fff;
+        }
+
+        .cmd-btn.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+            border-color: #444;
+        }
+
+        /* モバイル用仮想パッド（画面が小さい場合のみ表示） */
+        #d-pad {
+            display: none;
+            grid-template-columns: 50px 50px 50px;
+            grid-template-rows: 50px 50px 50px;
+            gap: 5px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .d-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid #fff;
+            border-radius: 5px;
+            color: white;
+            font-size: 20px;
+        }
+        .d-btn:active { background: rgba(255, 255, 255, 0.5); }
+        #btn-up { grid-column: 2; grid-row: 1; }
+        #btn-left { grid-column: 1; grid-row: 2; }
+        #btn-right { grid-column: 3; grid-row: 2; }
+        #btn-down { grid-column: 2; grid-row: 3; }
+
+        @media (max-width: 600px) {
+            #d-pad { display: grid; }
+            #dialogue-box { font-size: 18px; }
+            .cmd-btn { font-size: 16px; padding: 8px 12px; }
+        }
+        
+        .hide { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <!-- 敵表示エリア -->
+    <div id="enemy-area">
+        <div id="enemy-sprite"></div>
+        <div id="enemy-name">謎のクリスタル</div>
+        <div class="hp-bar-container">
+            <div id="enemy-hp-bar" class="hp-bar-fill enemy-hp-fill" style="width: 100%;"></div>
+        </div>
+    </div>
+
+    <!-- 中央スクリーン（テキスト / 弾幕避け） -->
+    <div id="center-screen">
+        <div id="dialogue-box">
+            野生の 謎のクリスタル があらわれた！
+        </div>
+        <canvas id="dodge-canvas"></canvas>
+    </div>
+
+    <!-- プレイヤーUIエリア -->
+    <div id="player-ui">
+        <div id="player-stats">
+            <div>
+                NAME: <span id="player-name">PLAYER</span>
+            </div>
+            <div>
+                HP 
+                <div class="player-hp-bar-container">
+                    <div id="player-hp-bar" class="player-hp-bar-fill" style="width: 100%;"></div>
+                </div>
+                <span id="player-hp-text">20 / 20</span>
+            </div>
+        </div>
+
+        <div id="command-buttons">
+            <button class="cmd-btn" id="btn-fight" onclick="playerAction('fight')">⚔️ たたかう</button>
+            <button class="cmd-btn" id="btn-heal" onclick="playerAction('heal')">💊 かいふく</button>
+            <button class="cmd-btn hide" id="btn-continue" onclick="restartGame()">❤️ コンティニュー</button>
+        </div>
+    </div>
+
+    <!-- モバイル用方向キー（回避フェーズ用） -->
+    <div id="d-pad">
+        <button class="d-btn" id="btn-up">↑</button>
+        <button class="d-btn" id="btn-left">←</button>
+        <button class="d-btn" id="btn-right">→</button>
+        <button class="d-btn" id="btn-down">↓</button>
+    </div>
+</div>
+
+<script>
+    // --- ステータスと状態管理 ---
+    const MAX_PLAYER_HP = 20;
+    let playerHp = MAX_PLAYER_HP;
+    
+    const MAX_ENEMY_HP = 100;
+    let enemyHp = MAX_ENEMY_HP;
+
+    let gameState = 'PLAYER_TURN'; // PLAYER_TURN, ENEMY_TURN, ANIMATING, GAME_OVER
+
+    // --- DOM要素 ---
+    const elDialogue = document.getElementById('dialogue-box');
+    const elCanvas = document.getElementById('dodge-canvas');
+    const ctx = elCanvas.getContext('2d');
+    const elEnemyHp = document.getElementById('enemy-hp-bar');
+    const elPlayerHp = document.getElementById('player-hp-bar');
+    const elPlayerHpText = document.getElementById('player-hp-text');
+    const elEnemySprite = document.getElementById('enemy-sprite');
+    const cmdButtons = document.querySelectorAll('.cmd-btn');
+    const dPad = document.getElementById('d-pad');
+
+    // テキストを表示する関数（一文字ずつ表示する演出風、今回はシンプルに即時表示）
+    function showText(text) {
+        elDialogue.innerHTML = text.replace(/\n/g, '<br>');
+    }
+
+    function setButtonsDisabled(disabled) {
+        cmdButtons.forEach(btn => {
+            if (disabled) btn.classList.add('disabled');
+            else btn.classList.remove('disabled');
+        });
+    }
+
+    function updateHPUI() {
+        // プレイヤーHP更新
+        const playerPercent = Math.max(0, (playerHp / MAX_PLAYER_HP) * 100);
+        elPlayerHp.style.width = `${playerPercent}%`;
+        elPlayerHpText.innerText = `${Math.ceil(playerHp)} / ${MAX_PLAYER_HP}`;
+
+        // 敵HP更新
+        const enemyPercent = Math.max(0, (enemyHp / MAX_ENEMY_HP) * 100);
+        elEnemyHp.style.width = `${enemyPercent}%`;
+    }
+
+    // --- プレイヤーターンの処理 ---
+    function playerAction(action) {
+        if (gameState !== 'PLAYER_TURN') return;
+        gameState = 'ANIMATING';
+        setButtonsDisabled(true);
+
+        if (action === 'fight') {
+            // 攻撃処理
+            const damage = Math.floor(Math.random() * 15) + 15; // 15〜30のダメージ
+            enemyHp -= damage;
+            showText(`あなたの攻撃！\n謎のクリスタルに ${damage} のダメージ！`);
+            
+            // 敵のダメージエフェクト
+            elEnemySprite.classList.add('damage-flash');
+            setTimeout(() => elEnemySprite.classList.remove('damage-flash'), 200);
+
+            updateHPUI();
+
+            if (enemyHp <= 0) {
+                setTimeout(() => {
+                    showText(`謎のクリスタルを 倒した！\nYOU WON!`);
+                    gameState = 'GAME_OVER';
+                    elEnemySprite.style.opacity = 0;
+                }, 1500);
+                return;
+            }
+
+        } else if (action === 'heal') {
+            // 回復処理
+            const healAmount = 10;
+            playerHp = Math.min(MAX_PLAYER_HP, playerHp + healAmount);
+            showText(`あなたは アイテムを使った！\nHPが ${healAmount} 回復した。`);
+            updateHPUI();
+        }
+
+        // 敵のターンへ移行
+        setTimeout(() => {
+            startEnemyTurn();
+        }, 2000);
+    }
+
+    // --- 敵のターン（回避ミニゲーム）処理 ---
+    let animationId;
+    let dodgePhaseTimer;
+    let frameCount = 0;
+    let projectiles = [];
+
+    // ソウル（自機）の定義
+    const soul = {
+        x: 0,
+        y: 0,
+        size: 16,
+        speed: 4,
+        color: '#ff0000',
+        invincible: 0 // 無敵時間のフレーム数
+    };
+
+    // キー入力状態
+    const keys = {
+        ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+        w: false, s: false, a: false, d: false
+    };
+
+    // キーボードイベント
+    window.addEventListener('keydown', e => {
+        if (keys.hasOwnProperty(e.key)) { keys[e.key] = true; e.preventDefault(); }
+    });
+    window.addEventListener('keyup', e => {
+        if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
+    });
+
+    // モバイル用ボタンイベント
+    const bindTouch = (id, key) => {
+        const btn = document.getElementById(id);
+        btn.addEventListener('touchstart', (e) => { keys[key] = true; e.preventDefault(); });
+        btn.addEventListener('touchend', (e) => { keys[key] = false; e.preventDefault(); });
+        btn.addEventListener('mousedown', (e) => { keys[key] = true; });
+        btn.addEventListener('mouseup', (e) => { keys[key] = false; });
+        btn.addEventListener('mouseleave', (e) => { keys[key] = false; });
+    };
+    bindTouch('btn-up', 'ArrowUp');
+    bindTouch('btn-down', 'ArrowDown');
+    bindTouch('btn-left', 'ArrowLeft');
+    bindTouch('btn-right', 'ArrowRight');
+
+    // キャンバスのリサイズ調整
+    function resizeCanvas() {
+        const rect = elCanvas.parentElement.getBoundingClientRect();
+        elCanvas.width = rect.width;
+        elCanvas.height = rect.height;
+    }
+
+    function startEnemyTurn() {
+        gameState = 'ENEMY_TURN';
+        elDialogue.classList.add('hide');
+        elCanvas.style.display = 'block';
+        resizeCanvas();
+
+        // 初期化
+        soul.x = elCanvas.width / 2;
+        soul.y = elCanvas.height / 2;
+        soul.invincible = 0;
+        projectiles = [];
+        frameCount = 0;
+
+        // ゲームループ開始
+        animationId = requestAnimationFrame(gameLoop);
+
+        // 敵のターン終了タイマー（7秒間避ける）
+        dodgePhaseTimer = setTimeout(() => {
+            endEnemyTurn();
+        }, 7000);
+    }
+
+    function endEnemyTurn() {
+        cancelAnimationFrame(animationId);
+        clearTimeout(dodgePhaseTimer);
+        elCanvas.style.display = 'none';
+        elDialogue.classList.remove('hide');
+        
+        if (gameState !== 'GAME_OVER') {
+            gameState = 'PLAYER_TURN';
+            showText(`あなたのターン！\nコマンドを選択してください。`);
+            setButtonsDisabled(false);
+        }
+    }
+
+    // 弾を生成するロジック
+    function spawnProjectile() {
+        // キャンバスの端から中心に向かって飛ぶ弾
+        const edge = Math.floor(Math.random() * 4); // 0:上, 1:右, 2:下, 3:左
+        let px, py, vx, vy;
+        const speed = Math.random() * 2 + 3; // 3〜5の速度
+        const size = Math.random() * 10 + 5; // 5〜15のサイズ
+
+        switch(edge) {
+            case 0: // 上から
+                px = Math.random() * elCanvas.width;
+                py = -20;
+                vx = (soul.x - px) / 60; // プレイヤーを狙う
+                vy = speed;
+                break;
+            case 1: // 右から
+                px = elCanvas.width + 20;
+                py = Math.random() * elCanvas.height;
+                vx = -speed;
+                vy = (soul.y - py) / 60;
+                break;
+            case 2: // 下から
+                px = Math.random() * elCanvas.width;
+                py = elCanvas.height + 20;
+                vx = (soul.x - px) / 60;
+                vy = -speed;
+                break;
+            case 3: // 左から
+                px = -20;
+                py = Math.random() * elCanvas.height;
+                vx = speed;
+                vy = (soul.y - py) / 60;
+                break;
+        }
+
+        projectiles.push({ x: px, y: py, vx: vx, vy: vy, size: size, type: Math.random() > 0.5 ? 'circle' : 'square' });
+    }
+
+    // メインゲームループ（敵のターン中のみ実行）
+    function gameLoop() {
+        if (gameState !== 'ENEMY_TURN') return;
+
+        // 背景クリア
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, elCanvas.width, elCanvas.height);
+
+        // ソウルの移動
+        let dx = 0; let dy = 0;
+        if (keys.ArrowUp || keys.w) dy -= soul.speed;
+        if (keys.ArrowDown || keys.s) dy += soul.speed;
+        if (keys.ArrowLeft || keys.a) dx -= soul.speed;
+        if (keys.ArrowRight || keys.d) dx += soul.speed;
+
+        // 斜め移動の速度調整
+        if (dx !== 0 && dy !== 0) {
+            dx *= 0.707; dy *= 0.707;
+        }
+
+        soul.x += dx;
+        soul.y += dy;
+
+        // 画面外に出ないように制限
+        const half = soul.size / 2;
+        if (soul.x < half) soul.x = half;
+        if (soul.x > elCanvas.width - half) soul.x = elCanvas.width - half;
+        if (soul.y < half) soul.y = half;
+        if (soul.y > elCanvas.height - half) soul.y = elCanvas.height - half;
+
+        // 弾の生成 (徐々に激しくなる)
+        if (frameCount % Math.max(10, 30 - Math.floor(frameCount/60)) === 0) {
+            spawnProjectile();
+        }
+
+        // 弾の更新と描画
+        ctx.fillStyle = '#fff';
+        for (let i = projectiles.length - 1; i >= 0; i--) {
+            let p = projectiles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+
+            // 描画
+            ctx.beginPath();
+            if (p.type === 'circle') {
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+            }
+
+            // 当たり判定 (シンプルな円形同士/短形同士の簡易判定)
+            if (soul.invincible <= 0) {
+                const distX = p.x - soul.x;
+                const distY = p.y - soul.y;
+                const distance = Math.sqrt(distX * distX + distY * distY);
+                
+                if (distance < (soul.size/2 + p.size/2 - 2)) {
+                    // 被弾
+                    takeDamage(3);
+                }
+            }
+
+            // 画面外の弾を削除
+            if (p.x < -50 || p.x > elCanvas.width + 50 || p.y < -50 || p.y > elCanvas.height + 50) {
+                projectiles.splice(i, 1);
+            }
+        }
+
+        // ソウルの描画（無敵時間は点滅）
+        if (soul.invincible > 0) {
+            soul.invincible--;
+        }
+
+        if (soul.invincible === 0 || Math.floor(frameCount / 5) % 2 === 0) {
+            // ハート型の代わりにシンプルな赤い四角形（ソウル）
+            ctx.fillStyle = soul.color;
+            ctx.fillRect(soul.x - soul.size/2, soul.y - soul.size/2, soul.size, soul.size);
+            
+            // ハートっぽく見せるための中心のハイライト
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillRect(soul.x - soul.size/4, soul.y - soul.size/4, soul.size/2, soul.size/2);
+        }
+
+        // 枠線の描画
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(0, 0, elCanvas.width, elCanvas.height);
+
+        frameCount++;
+        animationId = requestAnimationFrame(gameLoop);
+    }
+
+    // ダメージ処理
+    function takeDamage(amount) {
+        playerHp -= amount;
+        soul.invincible = 60; // 60フレーム（約1秒）無敵
+        updateHPUI();
+
+        // 画面を少し揺らすエフェクト
+        document.getElementById('center-screen').style.transform = 'translate(-5px, 5px)';
+        setTimeout(() => document.getElementById('center-screen').style.transform = 'translate(5px, -5px)', 50);
+        setTimeout(() => document.getElementById('center-screen').style.transform = 'translate(0, 0)', 100);
+
+        if (playerHp <= 0) {
+            playerHp = 0;
+            updateHPUI();
+            gameOver();
+        }
+    }
+
+    function gameOver() {
+        gameState = 'GAME_OVER';
+        cancelAnimationFrame(animationId);
+        clearTimeout(dodgePhaseTimer);
+        elCanvas.style.display = 'none';
+        elDialogue.classList.remove('hide');
+        showText(`GAME OVER\nあなたは 決意を失ってしまった...`);
+        
+        // 通常コマンドを隠してコンティニューボタンを表示
+        document.getElementById('btn-fight').classList.add('hide');
+        document.getElementById('btn-heal').classList.add('hide');
+        document.getElementById('btn-continue').classList.remove('hide');
+        document.getElementById('btn-continue').classList.remove('disabled'); // 無効化状態を解除して押せるようにする
+        
+        soul.color = '#888'; // 魂が割れた・色を失った演出
+    }
+
+    // コンティニュー処理
+    function restartGame() {
+        // ステータスと状態のリセット
+        playerHp = MAX_PLAYER_HP;
+        enemyHp = MAX_ENEMY_HP;
+        gameState = 'PLAYER_TURN';
+        soul.color = '#ff0000'; // ソウルの色を赤に戻す
+        
+        // UIの表示リセット
+        document.getElementById('btn-fight').classList.remove('hide');
+        document.getElementById('btn-heal').classList.remove('hide');
+        document.getElementById('btn-continue').classList.add('hide');
+        setButtonsDisabled(false);
+        
+        elEnemySprite.style.opacity = 1; // 敵の表示を戻す
+        
+        updateHPUI();
+        showText(`野生の 謎のクリスタル があらわれた！\n（ケツイを みなぎらせた！）`);
+    }
+
+    // 初期化
+    window.onload = () => {
+        updateHPUI();
+        showText(`野生の 謎のクリスタル があらわれた！`);
+    };
+
+    // リサイズイベント
+    window.addEventListener('resize', () => {
+        if (gameState === 'ENEMY_TURN') resizeCanvas();
+    });
+
+</script>
+</body>
+</html>
